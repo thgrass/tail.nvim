@@ -18,17 +18,28 @@ local function attach(buf)
   vim.api.nvim_buf_attach(buf, false, {
     on_lines = function(_, b, _, _, _, _, _)
       if not is_enabled(b) then return end
-      local last = vim.api.nvim_buf_line_count(b)
-    for _, win in ipairs(vim.fn.win_findbuf(b)) do
-      local cur = vim.api.nvim_win_get_cursor(win)[1]
-      local near_bottom = cur >= last - threshold
-      local at_eof = cur == last
-        if near_bottom or at_eof then
-          -- Reset both cursor and scroll
-          vim.api.nvim_win_set_cursor(win, { last, 0 })
-          pcall(vim.api.nvim_win_call, win, function() vim.cmd("normal! zb") end)
+
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(b) then return end
+        local last = vim.api.nvim_buf_line_count(b)
+
+        for _, win in ipairs(vim.fn.win_findbuf(b)) do
+          if not vim.api.nvim_win_is_valid(win) then goto continue end
+          local ok, cur = pcall(vim.api.nvim_win_get_cursor, win)
+          if not ok then goto continue end
+
+          local line = cur[1]
+          local near_bottom = line >= last - threshold
+          local at_eof = line == last
+
+          if near_bottom or at_eof then
+            pcall(vim.api.nvim_win_set_cursor, win, { last, 0 })
+            pcall(vim.api.nvim_win_call, win, function() vim.cmd("normal! zb") end)
+          end
+
+          ::continue::
         end
-      end
+      end)
     end,
     on_detach = function() end,
   })
@@ -57,3 +68,4 @@ function M.setup()
 end
 
 return M
+
