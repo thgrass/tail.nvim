@@ -173,9 +173,9 @@ function M.enable(buf)
       backfill_ts(buf)
     end
   end
+  attach(buf)
   -- Move cursor to end of buffer for immediate effect
   move_cursor_to_end_of_buffer(buf)
-  attach(buf)
 end
 
 --- Disable tail following for a buffer.  This does not disable timestamps; to
