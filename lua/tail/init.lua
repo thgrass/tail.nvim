@@ -80,6 +80,19 @@ local function move_cursor_to_end_of_buffer(bufnr)
   end
 end
 
+-- Tiny helper: perform the EOF jump *after* the buffer/window settles.
+-- This handles very fast fills during load where the cursor would otherwise
+-- remain on line 1.
+local function kick_to_end(buf)
+  -- First, wait until the current event loop tick completes.
+  vim.schedule(function()
+    move_cursor_to_end_of_buffer(buf)
+    -- Then nudge once more on the next timer tick to beat late on_lines updates.
+    vim.defer_fn(function()
+      move_cursor_to_end_of_buffer(buf)
+    end, 10) -- small delay; low enough to be unnoticeable, high enough to outlast initial fills
+  end)
+end
 
 -- Add a timestamp extmark to a single line.  Does nothing if timestamps are
 -- disabled for the buffer.
@@ -174,20 +187,18 @@ function M.enable(buf)
     end
   end
   attach(buf)
-  -- Move cursor to end of buffer for immediate effect
-  move_cursor_to_end_of_buffer(buf)
+  -- Move cursor to end of buffer for immediate effect (handles fast fills).
+  kick_to_end(buf)
   -- If the buffer isn't visible yet, jump when it becomes visible.
-  if vim.fn.bufwinid(buf) == -1 then
-    vim.api.nvim_create_autocmd("BufWinEnter", {
-      buffer = buf,
-      once = true,
-      callback = function(args)
-        if is_tail_enabled(args.buf) then
-          move_cursor_to_end_of_buffer(args.buf)
-        end
-      end,
-    })
-  end
+  vim.api.nvim_create_autocmd("BufWinEnter", {
+    buffer = buf,
+    once = true,
+    callback = function(args)
+      if is_tail_enabled(args.buf) then
+        kick_to_end(args.buf)
+      end
+    end,
+  })
 end
 
 --- Disable tail following for a buffer.  This does not disable timestamps; to
