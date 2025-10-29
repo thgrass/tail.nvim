@@ -58,6 +58,16 @@ local function set_ts_enabled(buf, val)
   vim.b[buf].tail_ts_enabled = val and true or false
 end
 
+-- Move the cursor to the beginning of the last line of a buffer.
+local function move_cursor_to_end_of_buffer()
+    local source_lines = vim.api.nvim_buf_get_lines(0, 0, -1, true)
+    local line = 0
+    for _ in pairs(source_lines) do 
+        line = line + 1 
+    end
+    vim.api.nvim_win_set_cursor(0, {line, 0})
+end
+
 -- Add a timestamp extmark to a single line.  Does nothing if timestamps are
 -- disabled for the buffer.
 local function add_ts_extmark(buf, lnum)
@@ -142,6 +152,9 @@ end
 ---@param buf number|nil Buffer handle (0 for current buffer).
 function M.enable(buf)
   buf = buf or 0
+  -- Move cursor to end of buffer for immediate effect
+  move_cursor_to_end_of_buffer()
+  -- Enable actual behaviour
   set_tail_enabled(buf, true)
   -- Respect global default for timestamps when enabling.
   if M.opts.timestamps and vim.b[buf].tail_ts_enabled == nil then
