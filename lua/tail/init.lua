@@ -1,8 +1,8 @@
 -- tail.nvim
 --
 -- A minimal Neovim plugin that allows any buffer to follow appended lines—just like
--- the UNIX `tail -f` command. The optional timestamp feature is completely opt‑in 
--- on a per‑buffer basis and does not modify the underlying buffer contents; it merely
+-- the UNIX `tail -f` command. The optional timestamp feature is completely opt-in 
+-- on a per-buffer basis and does not modify the underlying buffer contents; it merely
 -- displays the time alongside each line for visual reference.
 
 local M = {}
@@ -10,7 +10,7 @@ local M = {}
 -- Default options. Override any of these via `require("tail").setup({ … })`.
 --
 -- threshold        – Number of lines from the bottom of the window considered “near
---                    bottom” when auto‑scrolling.  When the cursor is within this
+--                    bottom” when auto-scrolling.  When the cursor is within this
 --                    threshold of the end of the buffer, the window will follow
 --                    appended lines.
 -- timestamps       – Whether to enable timestamp virtual text by default when
@@ -131,7 +131,7 @@ local function attach(buf)
       -- immediately so the virtual text is visible without delay.
       add_ts_for_insert(b, first, last_old, last_new)
 
-      -- Then, handle tail following.  Only auto‑scroll if tail is enabled on
+      -- Then, handle tail following.  Only auto-scroll if tail is enabled on
       -- this buffer.
       if not is_tail_enabled(b) then return end
       vim.schedule(function()
@@ -176,6 +176,18 @@ function M.enable(buf)
   attach(buf)
   -- Move cursor to end of buffer for immediate effect
   move_cursor_to_end_of_buffer(buf)
+  -- If the buffer isn't visible yet, jump when it becomes visible.
+  if vim.fn.bufwinid(buf) == -1 then
+    vim.api.nvim_create_autocmd("BufWinEnter", {
+      buffer = buf,
+      once = true,
+      callback = function(args)
+        if is_tail_enabled(args.buf) then
+          move_cursor_to_end_of_buffer(args.buf)
+        end
+      end,
+    })
+  end
 end
 
 --- Disable tail following for a buffer.  This does not disable timestamps; to
