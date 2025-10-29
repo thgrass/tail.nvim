@@ -59,14 +59,27 @@ local function set_ts_enabled(buf, val)
 end
 
 -- Move the cursor to the beginning of the last line of a buffer.
-local function move_cursor_to_end_of_buffer()
-    local source_lines = vim.api.nvim_buf_get_lines(0, 0, -1, true)
-    local line = 0
-    for _ in pairs(source_lines) do 
-        line = line + 1 
-    end
-    vim.api.nvim_win_set_cursor(0, {line, 0})
+local function move_cursor_to_end_of_buffer(bufnr)
+  bufnr = bufnr or 0  -- 0 = current buffer
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, true)
+
+  -- figure out last line index (1-based for win_set_cursor)
+  local last_line = #lines > 0 and #lines or 1
+  local last_col = 0
+  if lines[last_line] ~= nil then
+    last_col = #lines[last_line]  -- byte index (Neovim expects 0-based col)
+  end
+
+  -- if the buffer is visible, move the cursor in that window; else set a mark
+  local win = vim.fn.bufwinid(bufnr)
+  if win ~= -1 then
+    vim.api.nvim_win_set_cursor(win, { last_line, last_col })
+  else
+    -- Buffer not shown in any window: remember the spot with a mark.
+    vim.api.nvim_buf_set_mark(bufnr, "'", last_line, last_col, {})
+  end
 end
+
 
 -- Add a timestamp extmark to a single line.  Does nothing if timestamps are
 -- disabled for the buffer.
@@ -152,9 +165,6 @@ end
 ---@param buf number|nil Buffer handle (0 for current buffer).
 function M.enable(buf)
   buf = buf or 0
-  -- Move cursor to end of buffer for immediate effect
-  move_cursor_to_end_of_buffer()
-  -- Enable actual behaviour
   set_tail_enabled(buf, true)
   -- Respect global default for timestamps when enabling.
   if M.opts.timestamps and vim.b[buf].tail_ts_enabled == nil then
@@ -163,6 +173,8 @@ function M.enable(buf)
       backfill_ts(buf)
     end
   end
+  -- Move cursor to end of buffer for immediate effect
+  move_cursor_to_end_of_buffer(buf)
   attach(buf)
 end
 
