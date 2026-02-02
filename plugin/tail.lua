@@ -9,6 +9,10 @@
 --   :TailTimestampDisable
 --   :TailTimestampToggle
 --
+--   :TailLogLevelHlEnable
+--   :TailLogLevelHlDisable
+--   :TailLogLevelHlToggle
+--
 --   We treat files (as they may be buffered) separately from other buffers in here. As (neo)vim has problems with
 --   reliable reloading buffered files, we use our own timer to watch over a files changes. The rest of this file
 --   plugs that into the other code in init.lua.
@@ -18,7 +22,56 @@ local tail       = require("tail")
 -- per-buffer polling / config state for FILE-tail buffers
 local timers     = {} -- bufnr -> uv_timer
 local file_state = {} -- bufnr -> { path, offset, partial }
-local file_cfg   = {} -- bufnr -> { follow = bool, ts_enabled = bool, ts_format = string, ts_hl = string }
+local file_cfg   = {} -- bufnr -> { follow = bool, ts_enabled = bool, ts_format = string, ts_hl = string, log_level_hl = bool }
+
+-- namespace for log level highlighting in file-tail buffers
+local ns_loglevel = vim.api.nvim_create_namespace("tail-loglevel")
+
+-- default log level highlight groups (same as init.lua)
+local log_level_groups = {
+	TRACE = "DiagnosticHint",
+	DEBUG = "DiagnosticHint",
+	INFO = "DiagnosticInfo",
+	WARN = "DiagnosticWarn",
+	WARNING = "DiagnosticWarn",
+	ERROR = "DiagnosticError",
+}
+
+--- Highlight log level keywords in the given line range (1-based, inclusive)
+---@param bufnr number
+---@param start_line number 1-based start line
+---@param end_line number 1-based end line (inclusive)
+local function highlight_log_levels(bufnr, start_line, end_line)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return
+	end
+
+	local lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
+
+	for i, line in ipairs(lines) do
+		local lnum = start_line + i - 1
+
+		for keyword, hl_group in pairs(log_level_groups) do
+			-- Use frontier pattern for word boundary matching (uppercase only)
+			local pattern = "%f[%w]" .. keyword .. "%f[%W]"
+			local search_start = 1
+
+			while true do
+				local match_start, match_end = line:find(pattern, search_start)
+				if not match_start then
+					break
+				end
+
+				vim.api.nvim_buf_set_extmark(bufnr, ns_loglevel, lnum - 1, match_start - 1, {
+					end_col = match_end,
+					hl_group = hl_group,
+				})
+
+				search_start = match_end + 1
+			end
+		end
+	end
+end
 
 ----------------------------------------------------------------------
 -- Helper: is this buffer a regular file on disk (before tail mode)?
@@ -145,10 +198,11 @@ local function start_file_poller(bufnr)
 
 	-- initial config for this buffer
 	file_cfg[bufnr] = file_cfg[bufnr] or {
-		follow     = (tail.opts and tail.opts.follow) ~= false, -- default to true
-		ts_enabled = (tail.opts and tail.opts.timestamps) == true, -- default to false
-		ts_format  = (tail.opts and tail.opts.timestamp_format) or "%Y-%m-%d %H:%M:%S ",
-		ts_hl      = (tail.opts and tail.opts.timestamp_highlight) or "Comment",
+		follow       = (tail.opts and tail.opts.follow) ~= false, -- default to true
+		ts_enabled   = (tail.opts and tail.opts.timestamps) == true, -- default to false
+		ts_format    = (tail.opts and tail.opts.timestamp_format) or "%Y-%m-%d %H:%M:%S ",
+		ts_hl        = (tail.opts and tail.opts.timestamp_highlight) or "Comment",
+		log_level_hl = (tail.opts and tail.opts.log_level_hl) == true, -- default to false
 	}
 
 	-- move cursor to bottom initially
@@ -254,6 +308,13 @@ local function start_file_poller(bufnr)
 			vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, lines)
 			vim.bo[bufnr].modified = false -- still just a view
 
+			-- log level highlighting for new lines if enabled
+			if cfg.log_level_hl then
+				local line_count = vim.api.nvim_buf_line_count(bufnr)
+				local start_line = line_count - #lines + 1
+				highlight_log_levels(bufnr, start_line, line_count)
+			end
+
 			-- follow behaviour: only jump if follow=true
 			if cfg.follow then
 				local wins = vim.fn.win_findbuf(bufnr)
@@ -331,6 +392,43 @@ local function file_timestamps_disable(bufnr)
 		return
 	end
 	cfg.ts_enabled = false
+end
+
+----------------------------------------------------------------------
+-- Log level highlighting for FILE-tail buffers only
+----------------------------------------------------------------------
+
+local function file_log_level_hl_enable(bufnr, opts)
+	opts = opts or {}
+	local cfg = file_cfg[bufnr]
+	if not cfg then
+		cfg = {
+			follow       = true,
+			ts_enabled   = false,
+			ts_format    = "%Y-%m-%d %H:%M:%S ",
+			log_level_hl = false,
+		}
+		file_cfg[bufnr] = cfg
+	end
+
+	cfg.log_level_hl = true
+
+	if opts.backfill then
+		vim.api.nvim_buf_clear_namespace(bufnr, ns_loglevel, 0, -1)
+		local line_count = vim.api.nvim_buf_line_count(bufnr)
+		if line_count > 0 then
+			highlight_log_levels(bufnr, 1, line_count)
+		end
+	end
+end
+
+local function file_log_level_hl_disable(bufnr)
+	local cfg = file_cfg[bufnr]
+	if not cfg then
+		return
+	end
+	cfg.log_level_hl = false
+	vim.api.nvim_buf_clear_namespace(bufnr, ns_loglevel, 0, -1)
 end
 
 ----------------------------------------------------------------------
@@ -426,4 +524,48 @@ vim.api.nvim_create_user_command("TailTimestampToggle", function()
 	end
 end, {
 	desc = "Toggle timestamps",
+})
+
+----------------------------------------------------------------------
+-- Log level highlighting commands
+--   - File buffers (tail mode): our own behaviour
+--   - Other buffers: delegate to core tail.nvim
+----------------------------------------------------------------------
+
+vim.api.nvim_create_user_command("TailLogLevelHlEnable", function()
+	local bufnr = vim.api.nvim_get_current_buf()
+	if vim.b[bufnr].tail_file_path then
+		file_log_level_hl_enable(bufnr, { backfill = true })
+	else
+		tail.log_level_hl_enable(nil, { backfill = true })
+	end
+end, {
+	desc = "Enable log level highlighting",
+})
+
+vim.api.nvim_create_user_command("TailLogLevelHlDisable", function()
+	local bufnr = vim.api.nvim_get_current_buf()
+	if vim.b[bufnr].tail_file_path then
+		file_log_level_hl_disable(bufnr)
+	else
+		tail.log_level_hl_disable()
+	end
+end, {
+	desc = "Disable log level highlighting",
+})
+
+vim.api.nvim_create_user_command("TailLogLevelHlToggle", function()
+	local bufnr = vim.api.nvim_get_current_buf()
+	if vim.b[bufnr].tail_file_path then
+		local cfg = file_cfg[bufnr]
+		if cfg and cfg.log_level_hl then
+			file_log_level_hl_disable(bufnr)
+		else
+			file_log_level_hl_enable(bufnr, { backfill = true })
+		end
+	else
+		tail.log_level_hl_toggle(nil, { backfill = true })
+	end
+end, {
+	desc = "Toggle log level highlighting",
 })

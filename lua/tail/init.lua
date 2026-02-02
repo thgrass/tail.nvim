@@ -20,6 +20,17 @@ local default_config = {
 	timestamp_format = "%Y-%m-%d %H:%M:%S ",
 	-- highlight group used for the timestamp virtual text
 	timestamp_hl = "Comment",
+	-- enable log level highlighting by default for new buffers?
+	log_level_hl = false,
+	-- highlight groups for each log level keyword (uppercase only)
+	log_level_groups = {
+		TRACE = "DiagnosticHint",
+		DEBUG = "DiagnosticHint",
+		INFO = "DiagnosticInfo",
+		WARN = "DiagnosticWarn",
+		WARNING = "DiagnosticWarn",
+		ERROR = "DiagnosticError",
+	},
 }
 
 local config = vim.deepcopy(default_config)
@@ -37,6 +48,7 @@ local ns = vim.api.nvim_create_namespace("tail.nvim")
 -- buf_state[bufnr] = {
 --   enabled = bool,
 --   timestamps = bool,
+--   log_level_hl = bool,
 --   attached = bool,
 --   wins = {
 --     [winid] = { pinned = bool },
@@ -51,6 +63,7 @@ local function get_buf_state(bufnr)
 		s = {
 			enabled = false,
 			timestamps = config.timestamps,
+			log_level_hl = config.log_level_hl,
 			attached = false,
 			wins = {},
 		}
@@ -132,6 +145,59 @@ local function backfill_timestamps(bufnr)
 end
 
 -- ---------------------------------------------------------------------------
+-- Log level highlighting
+-- ---------------------------------------------------------------------------
+
+local ns_loglevel = vim.api.nvim_create_namespace("tail.nvim.loglevel")
+
+--- Highlight log level keywords in the given line range (1-based, inclusive)
+---@param bufnr number
+---@param start_line number 1-based start line
+---@param end_line number 1-based end line (inclusive)
+local function highlight_log_levels(bufnr, start_line, end_line)
+	if not is_valid_buf(bufnr) then
+		return
+	end
+
+	local lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
+
+	for i, line in ipairs(lines) do
+		local lnum = start_line + i - 1
+
+		for keyword, hl_group in pairs(config.log_level_groups) do
+			-- Use frontier pattern for word boundary matching (uppercase only)
+			local pattern = "%f[%w]" .. keyword .. "%f[%W]"
+			local search_start = 1
+
+			while true do
+				local match_start, match_end = line:find(pattern, search_start)
+				if not match_start then
+					break
+				end
+
+				vim.api.nvim_buf_set_extmark(bufnr, ns_loglevel, lnum - 1, match_start - 1, {
+					end_col = match_end,
+					hl_group = hl_group,
+				})
+
+				search_start = match_end + 1
+			end
+		end
+	end
+end
+
+local function backfill_log_levels(bufnr)
+	if not is_valid_buf(bufnr) then
+		return
+	end
+	vim.api.nvim_buf_clear_namespace(bufnr, ns_loglevel, 0, -1)
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	if line_count > 0 then
+		highlight_log_levels(bufnr, 1, line_count)
+	end
+end
+
+-- ---------------------------------------------------------------------------
 -- Core: on_lines handler (tail + timestamps)
 -- ---------------------------------------------------------------------------
 
@@ -149,6 +215,12 @@ local function on_lines(_, bufnr, _changedtick, firstline, lastline_old, new_las
 		for i = 0, added - 1 do
 			add_timestamp(bufnr, start + i)
 		end
+	end
+
+	-- log level highlighting: only care if lines were added
+	if bs.log_level_hl and new_lastline > lastline_old then
+		local start = firstline + 1 -- convert 0-based to 1-based
+		highlight_log_levels(bufnr, start, new_lastline)
 	end
 
 	-- tail-following: only if the window was “pinned” *before* the change
@@ -309,6 +381,44 @@ function M.timestamps_toggle(bufnr, opts)
 		M.timestamps_disable(bufnr)
 	else
 		M.timestamps_enable(bufnr, opts)
+	end
+end
+
+-- ---------------------------------------------------------------------------
+-- Public API: log level highlighting
+-- ---------------------------------------------------------------------------
+
+function M.log_level_hl_enable(bufnr, opts)
+	bufnr = bufnr or vim.api.nvim_get_current_buf()
+	if not is_valid_buf(bufnr) then
+		return
+	end
+	local bs = get_buf_state(bufnr)
+	bs.log_level_hl = true
+
+	opts = opts or {}
+	if opts.backfill then
+		backfill_log_levels(bufnr)
+	end
+end
+
+function M.log_level_hl_disable(bufnr)
+	bufnr = bufnr or vim.api.nvim_get_current_buf()
+	if not is_valid_buf(bufnr) then
+		return
+	end
+	local bs = get_buf_state(bufnr)
+	bs.log_level_hl = false
+	vim.api.nvim_buf_clear_namespace(bufnr, ns_loglevel, 0, -1)
+end
+
+function M.log_level_hl_toggle(bufnr, opts)
+	bufnr = bufnr or vim.api.nvim_get_current_buf()
+	local bs = get_buf_state(bufnr)
+	if bs.log_level_hl then
+		M.log_level_hl_disable(bufnr)
+	else
+		M.log_level_hl_enable(bufnr, opts)
 	end
 end
 

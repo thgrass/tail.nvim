@@ -1,7 +1,8 @@
 # tail.nvim
 
 A minimal Neovim plugin that allows any buffer to follow appended lines—just like `tail -f`. It can
-optionally display a timestamp before each new line using virtual text.
+optionally display a timestamp before each new line using virtual text, and highlight log level
+keywords (ERROR, WARN, INFO, DEBUG, TRACE).
 
 ## Features
 
@@ -9,6 +10,7 @@ optionally display a timestamp before each new line using virtual text.
 - Respects user scrolling: won't yank you back if you've moved up
 - Works on any buffer type: `nofile`, plugin buffers, etc. Your mileage may vary for writeable or "exotic" buffers like :terminal
 - Optional per-buffer timestamps: prefix newly inserted lines with the current time. The timestamp is drawn with virtual text, so it does not modify the file’s content.
+- Optional log level highlighting: colorize ERROR, WARN, INFO, DEBUG, TRACE keywords using Neovim's diagnostic highlight groups.
 - Does not move the cursor position on activation by default. Use neovim's move to end of buffer, default: Shift + g.
 
 ### Demo
@@ -44,12 +46,14 @@ Set up the plugin in your init.lua:
 
 ```lua
 require("tail").setup({
-  -- uncomment the next line to enable timestamps by default
-  -- timestamps = true,
+  -- enable timestamps by default
+  timestamps = false,
   -- customise the format (see `:help os.date`)
   timestamp_format = "%Y-%m-%d %H:%M:%S",
   -- customise the highlight group used for the timestamp
   timestamp_hl = "Comment",
+  -- enable log level highlighting by default
+  log_level_hl = false,
 })
 ```
 
@@ -61,12 +65,16 @@ Then, from any buffer enable, disable or toggle tailing behaviour:
 :TailToggle
 ```
 
-Similarily the timestamps are controlled:
+Similarly, timestamps and log level highlighting are controlled:
 
 ```vim
-:TailTimestampToggle
 :TailTimestampEnable
 :TailTimestampDisable
+:TailTimestampToggle
+
+:TailLogLevelHlEnable
+:TailLogLevelHlDisable
+:TailLogLevelHlToggle
 ```
 
 The actual following behavior might not directly work, as the cursor position is not changed
@@ -98,6 +106,10 @@ require("tail").timestamps_enable(bufnr, { backfill = true })
 require("tail").timestamps_disable(bufnr)
 require("tail").timestamps_toggle(bufnr, { backfill = false })
 
+-- Log level highlighting
+require("tail").log_level_hl_enable(bufnr, { backfill = true })
+require("tail").log_level_hl_disable(bufnr)
+require("tail").log_level_hl_toggle(bufnr, { backfill = false })
 ```
 
 ## License
